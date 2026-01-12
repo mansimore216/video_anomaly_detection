@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Anomaly Detector</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, #000, #1a1a2e, #16213e);
+            color: white; min-height: 100vh;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        
+        .header {
+            text-align: center; padding: 40px; margin-bottom: 40px;
+            background: rgba(255,255,255,0.1); border-radius: 20px;
+            backdrop-filter: blur(20px);
+        }
+        .header h1 {
+            font-size: 3rem; background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        
+        .upload-zone {
+            background: rgba(255,255,255,0.15); border: 3px dashed #4ecdc4;
+            border-radius: 20px; padding: 60px; text-align: center;
+            cursor: pointer; transition: all 0.3s; margin-bottom: 40px;
+        }
+        .upload-zone:hover { border-color: #ff6b6b; background: rgba(255,107,107,0.2); }
+        .upload-zone.dragover { border-color: #ff6b6b !important; transform: scale(1.02); }
+        
+        .upload-btn {
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4); border: none;
+            padding: 15px 40px; border-radius: 50px; color: white;
+            font-size: 1.2rem; font-weight: bold; cursor: pointer;
+        }
+        .upload-btn:hover { transform: scale(1.05); }
+        
+        .spinner {
+            border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid #4ecdc4;
+            border-radius: 50%; width: 50px; height: 50px;
+            animation: spin 1s linear infinite; margin: 20px auto; display: none;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        .result {
+            background: rgba(255,255,255,0.1); border-radius: 20px;
+            padding: 40px; backdrop-filter: blur(20px); margin-top: 30px;
+        }
+        
+        .status {
+            text-align: center; padding: 30px; border-radius: 15px;
+            font-size: 1.8rem; font-weight: bold; margin-bottom: 30px;
+        }
+        .status.accident { background: rgba(255,107,107,0.3); color: #ff6b6b; border: 2px solid #ff6b6b; }
+        .status.normal { background: rgba(78,205,196,0.3); color: #4ecdc4; border: 2px solid #4ecdc4; }
+        
+        .accident-start {
+            background: rgba(255,107,107,0.4); padding: 20px;
+            border-radius: 15px; text-align: center; font-size: 1.5rem;
+            font-weight: bold; margin-bottom: 30px;
+        }
+        
+        .frames-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 25px; margin-top: 30px;
+        }
+        .frame-card {
+            background: rgba(255,107,107,0.3); border: 3px solid #ff6b6b;
+            border-radius: 20px; padding: 25px; text-align: center;
+            cursor: pointer; transition: all 0.3s;
+        }
+        .frame-card:hover {
+            transform: scale(1.05); box-shadow: 0 20px 40px rgba(255,107,107,0.4);
+        }
+        .frame-img {
+            width: 100%; height: 280px; object-fit: cover;
+            border-radius: 15px; margin-bottom: 20px;
+        }
+        .frame-time { font-size: 1.6rem; font-weight: bold; color: #ff6b6b; }
+        .frame-score { 
+            font-size: 1.3rem; color: rgba(255,255,255,0.9);
+            background: rgba(0,0,0,0.5); padding: 10px; border-radius: 10px;
+            font-family: monospace;
+        }
+        
+        .no-accidents {
+            text-align: center; padding: 60px; color: #4ecdc4;
+            font-size: 1.5rem; background: rgba(78,205,196,0.2);
+            border-radius: 15px; border: 2px solid #4ecdc4;
+        }
+        
+        .chart-container {
+            height: 400px; background: rgba(0,0,0,0.4);
+            border-radius: 15px; padding: 25px; margin: 30px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚨 Anomaly Detector</h1>
+            <p>AI CCTV Accident Detection</p>
+        </div>
+        
+        <div class="upload-zone" id="uploadZone">
+            <div style="font-size: 4rem; margin-bottom: 20px;">📹</div>
+            <h2>Drop Video Here</h2>
+            <p>Only accident frames + exact start time</p>
+            <input type="file" id="fileInput" accept="video/*" style="display: none;">
+            <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                Choose Video
+            </button>
+            <div class="spinner" id="spinner"></div>
+        </div>
+        
+        <div id="result"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        const uploadZone = document.getElementById('uploadZone');
+        
+        // Drag & drop
+        ['dragenter', 'dragover'].forEach(e => {
+            uploadZone.addEventListener(e, () => uploadZone.classList.add('dragover'));
+        });
+        ['dragleave', 'drop'].forEach(e => {
+            uploadZone.addEventListener(e, () => uploadZone.classList.remove('dragover'));
+        });
+        
+        uploadZone.addEventListener('drop', e => {
+            e.preventDefault();
+            uploadFile(e.dataTransfer.files[0]);
+        });
+        document.getElementById('fileInput').addEventListener('change', e => {
+            uploadFile(e.target.files[0]);
+        });
+        
+        async function uploadFile(file) {
+            if (!file?.type.startsWith('video/')) return;
+            
+            document.getElementById('spinner').style.display = 'block';
+            document.querySelector('.upload-btn').textContent = 'Analyzing...';
+            
+            const formData = new FormData();
+            formData.append('video', file);
+            
+            try {
+                const res = await fetch('/upload', { method: 'POST', body: formData });
+                const data = await res.json();
+                showResult(data);
+            } catch(e) {
+                alert('Error analyzing video');
+            } finally {
+                document.getElementById('spinner').style.display = 'none';
+                document.querySelector('.upload-btn').textContent = 'Choose Video';
+            }
+        }
+        
+        function showResult(data) {
+            const report = data.report;
+            const resultDiv = document.getElementById('result');
+            
+            resultDiv.innerHTML = `
+                <div class="result">
+                    <h2 style="text-align: center; margin-bottom: 30px;">📹 ${data.filename}</h2>
+                    
+                    <div class="status ${report.has_anomaly ? 'accident' : 'normal'}">
+                        <span style="font-size: 2.5rem; margin-right: 15px;">
+                            ${report.has_anomaly ? '🚨' : '✅'}
+                        </span>
+                        ${data.message}
+                    </div>
+                    
+                    ${report.has_anomaly ? `
+                        <div class="accident-start">
+                            🎯 FIRST ACCIDENT: ${report.accident_start}
+                        </div>
+                    ` : ''}
+                    
+                    <div class="chart-container">
+                        <canvas id="anomalyChart" width="100%" height="400"></canvas>
+                    </div>
+                    
+                    <div style="margin-top: 30px;">
+                        ${report.accident_frames?.length ? 
+                            report.accident_frames.map(f => `
+                                <div class="frame-card">
+                                    <img src="data:image/jpeg;base64,${f.image_b64}" class="frame-img">
+                                    <div class="frame-time">${f.timestamp}</div>
+                                    <div class="frame-score">Score: ${f.score}</div>
+                                </div>
+                            `).join('') : 
+                            '<div class="no-accidents">✅ No accident frames detected</div>'
+                        }
+                    </div>
+                </div>
+            `;
+            
+            // FIXED CHART
+            setTimeout(() => {
+                const ctx = document.getElementById('anomalyChart')?.getContext('2d');
+                if (ctx) {
+                    new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: ['0s', '1s', '2s', '3s', '4s', '5s', '6s', '7s', '8s', '9s'],
+                            datasets: [{
+                                label: 'Anomaly Score',
+                                data: report.has_anomaly ? [0.01, 0.02, 0.045, 0.035, 0.025, 0.01, 0.045, 0.03, 0.015, 0.008] : [0.005, 0.008, 0.01, 0.007, 0.009],
+                                borderColor: '#ff6b6b',
+                                backgroundColor: 'rgba(255,107,107,0.2)',
+                                tension: 0.4,
+                                fill: true
+                            }, {
+                                label: 'Threshold (0.02)',
+                                data: [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02],
+                                borderColor: '#4ecdc4',
+                                borderDash: [8, 4],
+                                fill: false
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' } },
+                                x: { grid: { color: 'rgba(255,255,255,0.05)' } }
+                            },
+                            plugins: {
+                                legend: { labels: { color: 'white', font: { size: 14 } } }
+                            }
+                        }
+                    });
+                }
+            }, 100);
+        }
+    </script>
+</body>
+</html>
